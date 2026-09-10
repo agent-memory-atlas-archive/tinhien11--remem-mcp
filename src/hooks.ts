@@ -333,6 +333,9 @@ timeout = 10
 
 /** Install auto-capture hooks for supported agents. */
 export async function installHooks(): Promise<void> {
+  // Clean up old hooks first (handles upgrades where hooks were removed)
+  await uninstallHooks(true);
+
   const names: string[] = [];
 
   if (installDevinHooks()) names.push("Devin CLI");
@@ -349,9 +352,7 @@ export async function installHooks(): Promise<void> {
 }
 
 /** Remove hooks from agent config files. */
-export async function uninstallHooks(): Promise<void> {
-  console.log("Removing lifecycle hooks...\n");
-
+export async function uninstallHooks(calledFromInstall = false): Promise<void> {
   let removed = 0;
   const rememEvents = [
     "SessionStart",
@@ -388,7 +389,6 @@ export async function uninstallHooks(): Promise<void> {
         delete config.hooks;
       }
       writeJsonConfig(devinPath, config);
-      console.log(`  Devin CLI: Hooks removed from ${devinPath}`);
       removed++;
     }
   }
@@ -415,7 +415,6 @@ export async function uninstallHooks(): Promise<void> {
         delete config.hooks;
       }
       writeJsonConfig(claudePath, config);
-      console.log(`  Claude Code: Hooks removed from ${claudePath}`);
       removed++;
     }
   }
@@ -428,14 +427,11 @@ export async function uninstallHooks(): Promise<void> {
     if (cleaned !== content) {
       content = cleaned;
       writeFileSync(codexPath, content.trimEnd() + "\n", "utf-8");
-      console.log(`  Codex CLI: Hooks removed from ${codexPath}`);
       removed++;
     }
   }
 
-  if (removed === 0) {
-    console.log("No hooks found to remove.");
-  } else {
-    console.log(`\nHooks removed from ${removed} agent(s).`);
+  if (removed > 0 && !calledFromInstall) {
+    console.log(`Hooks removed from ${removed} agent(s).`);
   }
 }
