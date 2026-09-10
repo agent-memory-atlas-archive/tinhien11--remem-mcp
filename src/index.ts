@@ -538,8 +538,8 @@ After that, the agent follows the rules automatically.`);
 remem-mcp quick guide
 
   Step 1  Restart your agent (quit and reopen)
-  Step 2  Work normally — memory is automatic
-  Step 3  Look for [remem-mcp] at top of response = active
+  Step 2  Ask: "what do you remember?"
+  Step 3  If agent recalls past context = memory working
 
   In your agent, you can say:
     "index the code in src"         → CodeGraph indexes symbols
@@ -623,8 +623,8 @@ remem-mcp quick guide
 
     console.log("\n✓ Setup complete.\n");
     console.log("  Step 1  Restart your agent (quit and reopen)");
-    console.log("  Step 2  Work normally — memory is automatic");
-    console.log("  Step 3  Look for [remem-mcp] at top of response = active\n");
+    console.log("  Step 2  Ask: \"what do you remember?\"");
+    console.log("  Step 3  If agent recalls past context = memory working\n");
     console.log("  In your agent, you can say:");
     console.log('    "index the code in src"         → CodeGraph indexes symbols');
     console.log('    "find who calls function X"     → caller analysis');
