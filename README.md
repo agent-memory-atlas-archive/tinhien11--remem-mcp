@@ -25,6 +25,7 @@ That's it. Use your agent normally — memory works automatically.
 
 ```bash
 npx remem-mcp status    # verify: hooks ✓, DB ✓, CodeGraph ✓
+npx remem-mcp guide     # quick start guide anytime
 ```
 
 ---
@@ -36,10 +37,6 @@ After setup, restart your agent and ask:
 > "what do you remember?"
 
 If the agent recalls past context, memory is working. No `[remem-mcp]` prefix needed — some agents don't show hook output.
-
-```bash
-npx remem-mcp guide     # show this guide anytime
-```
 
 ---
 
