@@ -29,13 +29,28 @@ npx remem-mcp status    # verify: hooks ✓, DB ✓, CodeGraph ✓
 
 ---
 
+## Quick start
+
+After setup, restart your agent and ask:
+
+> "what do you remember?"
+
+If the agent recalls past context, memory is working. No `[remem-mcp]` prefix needed — some agents don't show hook output.
+
+```bash
+npx remem-mcp guide     # show this guide anytime
+```
+
+---
+
 ## What happens automatically
 
 | When | What |
 |---|---|
 | Session start | Past errors, decisions, and persona injected into agent context |
-| Each prompt | Matching memory injected (you'll see `[remem-mcp]` at the top) |
-| Tool calls | Verbose output offloaded to refs, Mermaid canvas injected (92% token cut) |
+| Each prompt | Matching memory injected into agent context |
+| Failed commands | Auto-captured as error memories |
+| Context compaction | Memory re-injected after compaction |
 | Session end | Worker auto-extracts facts, consolidates summaries, updates persona |
 
 You don't run any commands. The agent calls `recall()` before answering and `capture()` after work — the skill tells it to.
@@ -49,8 +64,8 @@ AI Agent (Claude Code / Devin / Cursor / Codex)
     │
     ├── MCP tools ──▶ recall, capture, codegraph_*, wiki_*, feedback
     │
-    └── Hooks ──▶ SessionStart, UserPromptSubmit, PreToolUse,
-                  PostToolUse, Stop, PostCompact
+    └── Hooks ──▶ SessionStart, UserPromptSubmit,
+                  PostToolUse, PostCompaction, SessionEnd
                         │
                         ▼
               SQLite (memory.db)
