@@ -111,55 +111,6 @@ npx remem-mcp impact <id>                   # blast radius
 
 ---
 
-## Per-agent install
-
-<details>
-<summary>Claude Code</summary>
-
-```bash
-claude mcp add remem-mcp --scope user -- npx -y remem-mcp
-npx remem-mcp install-hooks
-```
-</details>
-
-<details>
-<summary>Cursor</summary>
-
-[![Install in Cursor](https://img.shields.io/badge/Cursor-Install-blue)](cursor://anysphere.cursor-deeplink/mcp/install?name=remem-mcp&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsInJlbWVtLW1jcCJdfQ==)
-
-Or add to `~/.cursor/mcp.json`:
-```json
-{
-  "mcpServers": {
-    "remem-mcp": { "command": "npx", "args": ["-y", "remem-mcp"] }
-  }
-}
-```
-</details>
-
-<details>
-<summary>Devin CLI</summary>
-
-```bash
-devin mcp add remem-mcp --scope user -- npx -y remem-mcp
-npx remem-mcp install-hooks
-```
-</details>
-
-<details>
-<summary>Codex CLI</summary>
-
-Add to `~/.codex/config.toml`:
-```toml
-[mcp_servers.remem-mcp]
-command = "npx"
-args = ["-y", "remem-mcp"]
-```
-Then run `npx remem-mcp install-hooks`.
-</details>
-
----
-
 ## Useful commands
 
 ```bash
