@@ -19,24 +19,20 @@ Local-first memory that survives context compaction. Learns from every error, in
 npx remem-mcp setup
 ```
 
-Auto-detects Claude Code, Cursor, Devin, Codex. Registers MCP server + hooks. Restart your agent.
-
-That's it. Use your agent normally — memory works automatically.
-
-```bash
-npx remem-mcp status    # verify: hooks ✓, DB ✓, CodeGraph ✓
-npx remem-mcp guide     # quick start guide anytime
-```
+Auto-detects Claude Code, Cursor, Devin, Codex. Registers MCP server + hooks.
 
 ---
 
 ## Quick start
 
-After setup, restart your agent and ask:
+1. Restart your agent (quit and reopen)
+2. Ask: "what do you remember?"
+3. If agent recalls past context = memory working
 
-> "what do you remember?"
-
-If the agent recalls past context, memory is working. No `[remem-mcp]` prefix needed — some agents don't show hook output.
+In your agent, you can say:
+- "index the code in src" → CodeGraph indexes symbols
+- "find who calls function X" → caller analysis
+- "what do you remember?" → recall past context
 
 ---
 
