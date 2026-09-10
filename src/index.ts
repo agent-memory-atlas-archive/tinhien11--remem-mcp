@@ -533,18 +533,28 @@ After that, the agent follows the rules automatically.`);
     await installHooks();
     return;
   }
+  if (arg === "guide") {
+    console.log(`
+remem-mcp quick guide
+
+  Step 1  Restart your agent (quit and reopen)
+  Step 2  Work normally — memory is automatic
+  Step 3  Look for [remem-mcp] at top of response = active
+
+  In your agent, you can say:
+    "index the code in src"         → CodeGraph indexes symbols
+    "find who calls function X"     → caller analysis
+    "what do you remember?"         → recall past context
+`);
+    return;
+  }
   if (arg === "setup") {
     console.log("remem-mcp setup\n");
     await installMcpServer();
-    console.log("");
     await installHooks();
-    console.log("");
     await installSkill();
-    console.log("\nCapturing project basics...");
     const { Memory } = await import("./sdk.js");
     const mem = new Memory();
-    // SDK constructor already hashes process.cwd() as the default sessionKey.
-    // Don't pass raw cwd — that would store under a different key than recall() uses.
     let captured = 0;
 
     // Detect package manager
@@ -608,25 +618,17 @@ After that, the agent follows the rules automatically.`);
     }
 
     if (captured > 0) {
-      console.log(`  Captured ${captured} project basics.`);
-    } else {
-      // Check if project files exist but captures were deduped (already captured before)
-      const hasProjectFiles =
-        existsSync(join(process.cwd(), "package.json")) ||
-        existsSync(join(process.cwd(), "Cargo.toml")) ||
-        existsSync(join(process.cwd(), "go.mod")) ||
-        existsSync(join(process.cwd(), "pyproject.toml"));
-      if (hasProjectFiles) {
-        console.log("  Project basics already captured (no changes since last setup).");
-      } else {
-        console.log("  No project files detected. Skipping bootstrap.");
-      }
+      console.log(`Project basics: ${captured} captured`);
     }
 
-    console.log("\n✓ Done. Restart your agent.");
-    console.log("  Hooks auto-recall on start, auto-capture errors, auto-save on exit.");
-    console.log("  Skill teaches agent to use codegraph_search instead of grep.");
-    console.log("  `npx remem-mcp status` to see memory.");
+    console.log("\n✓ Setup complete.\n");
+    console.log("  Step 1  Restart your agent (quit and reopen)");
+    console.log("  Step 2  Work normally — memory is automatic");
+    console.log("  Step 3  Look for [remem-mcp] at top of response = active\n");
+    console.log("  In your agent, you can say:");
+    console.log('    "index the code in src"         → CodeGraph indexes symbols');
+    console.log('    "find who calls function X"     → caller analysis');
+    console.log('    "what do you remember?"         → recall past context');
     return;
   }
   if (arg === "uninstall-hooks") {
@@ -1347,6 +1349,7 @@ After that, the agent follows the rules automatically.`);
 
 Getting started:
   remem-mcp setup          One-command install (MCP + hooks + skill)
+  remem-mcp guide          Quick start guide (what to do after setup)
   remem-mcp demo           Error learning loop demo (15s)
   remem-mcp demo-codegraph Live CodeGraph demo on facebook/react
   remem-mcp status         One dashboard: health + all 3 loops + recent

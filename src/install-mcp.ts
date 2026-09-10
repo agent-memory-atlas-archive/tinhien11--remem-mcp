@@ -60,7 +60,7 @@ function registerJsonServer(target: JsonTarget): boolean {
       config = JSON.parse(readFileSync(target.path, "utf-8"));
     } catch {
       // Corrupt config — don't touch it
-      console.log(`  ${target.name}: Config file unreadable, skipping.`);
+      // silently skip corrupt configs
       return false;
     }
   }
@@ -68,9 +68,8 @@ function registerJsonServer(target: JsonTarget): boolean {
   const servers = (config[target.key] as Record<string, unknown>) || {};
   const entry = target.useGlobal ? MCP_SERVER_ENTRY_WITH_GLOBAL : MCP_SERVER_ENTRY;
 
-  if (JSON.stringify(servers["remem-mcp"]) === JSON.stringify(entry)) {
-    console.log(`  ${target.name}: Already registered.`);
-    return true;
+  if (servers["remem-mcp"]) {
+    return true; // already registered
   }
 
   servers["remem-mcp"] = entry;
@@ -82,15 +81,12 @@ function registerJsonServer(target: JsonTarget): boolean {
   }
 
   writeFileSync(target.path, JSON.stringify(config, null, 2) + "\n", "utf-8");
-  console.log(`  ${target.name}: MCP server registered.`);
   return true;
 }
 
 /** Register the MCP server in all supported agent configs. */
 export async function installMcpServer(): Promise<void> {
-  console.log("\nRegistering MCP server...\n");
-
-  let count = 0;
+  const names: string[] = [];
   for (const target of JSON_TARGETS) {
     // Only register if the config file already exists (agent is installed)
     // or the agent's directory exists.
@@ -114,7 +110,7 @@ export async function installMcpServer(): Promise<void> {
     }
 
     if (registerJsonServer(target)) {
-      count++;
+      names.push(target.name);
     }
   }
 
@@ -123,8 +119,7 @@ export async function installMcpServer(): Promise<void> {
   if (existsSync(codexConfig)) {
     const content = readFileSync(codexConfig, "utf-8");
     if (content.includes("[mcp_servers.remem-mcp]")) {
-      console.log("  Codex CLI: Already registered.");
-      count++;
+      names.push("Codex CLI");
     } else {
       const tomlEntry = `
 [mcp_servers.remem-mcp]
@@ -135,15 +130,9 @@ args = ["-y", "remem-mcp"]
 REMEM_GLOBAL_SESSION_KEY = "global"
 `;
       writeFileSync(codexConfig, content + tomlEntry, "utf-8");
-      console.log("  Codex CLI: MCP server registered.");
-      count++;
+      names.push("Codex CLI");
     }
   }
 
-  if (count === 0) {
-    console.log("  No agent config files found. MCP server will need manual setup.");
-    console.log("  See README for manual config instructions.");
-  } else {
-    console.log(`\nMCP server registered in ${count} agent config(s).`);
-  }
+  console.log(`MCP server: ${names.join(", ")}`);
 }

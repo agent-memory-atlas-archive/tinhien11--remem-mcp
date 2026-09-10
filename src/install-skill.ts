@@ -47,7 +47,7 @@ const SKILL_TARGETS = [
 /** Install the skill file to all supported agent directories. */
 export async function installSkill(): Promise<void> {
   const skillContent = loadSkillContent();
-  let installed = 0;
+  const names: string[] = [];
 
   for (const target of SKILL_TARGETS) {
     const dir = dirname(target.path);
@@ -57,22 +57,9 @@ export async function installSkill(): Promise<void> {
       mkdirSync(dir, { recursive: true });
     }
 
-    // Check if the skill already exists
-    if (existsSync(target.path)) {
-      console.log(`  ${target.name}: Already installed. Updated.`);
-    } else {
-      console.log(`  ${target.name}: Installed.`);
-    }
-
     writeFileSync(target.path, skillContent, "utf-8");
-    installed++;
+    names.push(target.name);
   }
 
-  console.log(`\nSkill installed to ${installed} location(s).`);
-  console.log("Restart your agent to load the skill.");
-  console.log("\nThe skill teaches your agent to:");
-  console.log("  - Recall past context before answering");
-  console.log("  - Capture decisions, learnings, and fixes after completing work");
-  console.log("  - Search with filters when recall is too broad");
-  console.log("  - Forget only on explicit user request");
+  console.log(`Skill: ${names.join(", ")}`);
 }

@@ -118,18 +118,6 @@ const HOOKS_CONFIG = {
       ],
     },
   ],
-  PreToolUse: [
-    {
-      matcher: "Bash|exec",
-      hooks: [
-        {
-          type: "command",
-          command: hookCommand("hook-pre-tool-use"),
-          timeout: 5,
-        },
-      ],
-    },
-  ],
   PostToolUse: [
     {
       matcher: "Bash|exec",
@@ -157,10 +145,6 @@ const HOOKS_CONFIG = {
       ],
     },
   ],
-  // Note: PostToolUseFailure is not supported by Devin CLI.
-  // Devin supports: PreToolUse, PostToolUse, UserPromptSubmit, Stop,
-  // PostCompaction, SessionStart, SessionEnd, PermissionRequest.
-  // Error capture is handled via PostToolUse with exit code 2.
   UserPromptSubmit: [
     {
       hooks: [
@@ -168,17 +152,6 @@ const HOOKS_CONFIG = {
           type: "command",
           command: hookCommand("hook-user-prompt"),
           timeout: 5,
-        },
-      ],
-    },
-  ],
-  Stop: [
-    {
-      hooks: [
-        {
-          type: "command",
-          command: hookCommand("hook-stop"),
-          timeout: 10,
         },
       ],
     },
@@ -251,13 +224,11 @@ function installDevinHooks(): boolean {
   const config = readJsonConfig(configPath);
   const updated = mergeHooks(config, HOOKS_CONFIG);
   writeJsonConfig(configPath, updated);
-
-  console.log(`  Devin CLI: Hooks wired into ${configPath}`);
   return true;
 }
 
 /** Install hooks for Claude Code.
- *  Claude Code supports PreCompact (before compaction) in addition to PostCompaction. */
+ *  Claude Code supports PostCompact (after compaction). */
 function installClaudeCodeHooks(): boolean {
   const settingsPath = join(homedir(), ".claude", "settings.json");
 
@@ -267,22 +238,10 @@ function installClaudeCodeHooks(): boolean {
     return false;
   }
 
-  // Claude Code supports PreCompact (before) and PostCompact (after) — not PostCompaction.
-  // Remap PostCompaction → PostCompact for Claude Code, and add PreCompact on top.
+  // Claude Code uses PostCompact (not PostCompaction)
   const { PostCompaction: _omit, ...baseWithoutPostCompaction } = HOOKS_CONFIG;
   const claudeHooksConfig = {
     ...baseWithoutPostCompaction,
-    PreCompact: [
-      {
-        hooks: [
-          {
-            type: "command",
-            command: hookCommand("hook-pre-compact"),
-            timeout: 10,
-          },
-        ],
-      },
-    ],
     PostCompact: [
       {
         hooks: [
@@ -299,8 +258,6 @@ function installClaudeCodeHooks(): boolean {
   const config = readJsonConfig(settingsPath);
   const updated = mergeHooks(config, claudeHooksConfig);
   writeJsonConfig(settingsPath, updated);
-
-  console.log(`  Claude Code: Hooks wired into ${settingsPath}`);
   return true;
 }
 
@@ -316,7 +273,6 @@ function installCodexHooks(): boolean {
 
   // Check if remem-mcp hooks are already installed
   if (hasCodexRememHooks(content)) {
-    console.log(`  Codex CLI: Hooks already installed in ${configPath}`);
     return true;
   }
 
@@ -331,16 +287,6 @@ type = "command"
 command = "${hookCommand("hook-recall")}"
 timeout = 10
 # <<< remem-mcp SessionStart <<<
-
-# >>> remem-mcp PreToolUse >>>
-[[hooks.PreToolUse]]
-matcher = "Bash|exec"
-
-[[hooks.PreToolUse.hooks]]
-type = "command"
-command = "${hookCommand("hook-pre-tool-use")}"
-timeout = 5
-# <<< remem-mcp PreToolUse <<<
 
 # >>> remem-mcp PostToolUse >>>
 [[hooks.PostToolUse]]
@@ -370,15 +316,6 @@ command = "${hookCommand("hook-user-prompt")}"
 timeout = 5
 # <<< remem-mcp UserPromptSubmit <<<
 
-# >>> remem-mcp Stop >>>
-[[hooks.Stop]]
-
-[[hooks.Stop.hooks]]
-type = "command"
-command = "${hookCommand("hook-stop")}"
-timeout = 5
-# <<< remem-mcp Stop <<<
-
 # >>> remem-mcp SessionEnd >>>
 [[hooks.SessionEnd]]
 
@@ -391,41 +328,24 @@ timeout = 10
 
   content = content.trimEnd() + "\n" + hooksToml;
   writeFileSync(configPath, content, "utf-8");
-
-  console.log(`  Codex CLI: Hooks wired into ${configPath}`);
-  console.log(`    Note: Set sandbox_mode = "danger-full-access" for MCP tools to work.`);
   return true;
 }
 
 /** Install auto-capture hooks for supported agents. */
 export async function installHooks(): Promise<void> {
-  console.log("Installing lifecycle hooks...\n");
+  const names: string[] = [];
 
-  let installed = 0;
+  if (installDevinHooks()) names.push("Devin CLI");
+  if (installClaudeCodeHooks()) names.push("Claude Code");
+  if (installCodexHooks()) names.push("Codex CLI");
 
-  if (installDevinHooks()) installed++;
-  if (installClaudeCodeHooks()) installed++;
-  if (installCodexHooks()) installed++;
-
-  if (installed === 0) {
-    console.log("\nNo supported agents found.");
+  if (names.length === 0) {
+    console.log("No supported agents found.");
     console.log("Install Devin CLI, Claude Code, or Codex CLI first, then run this command again.");
     return;
   }
 
-  console.log(`\nHooks wired to ${installed} agent(s).`);
-  console.log("\nHooks installed:");
-  console.log("  SessionStart → auto-recall recent memory into agent context");
-  console.log("  UserPromptSubmit → heuristic recall: inject memory matching user prompt");
-  console.log("  PreToolUse   → inject past errors before lint/build/test commands");
-  console.log("  PostToolUse  → auto-capture failed commands as error memories");
-  console.log("  PreCompact   → save checkpoint before compaction (Claude Code only)");
-  console.log("  PostCompact  → re-inject memory after compaction (Claude Code)");
-  console.log("  PostCompaction → re-inject memory after compaction (Devin CLI, Codex CLI)");
-  console.log("  Stop         → auto-capture session transcript + remind to save");
-  console.log("  SessionEnd   → silently capture session summary to memory DB");
-  console.log("\nRestart your agent for hooks to take effect.");
-  console.log("\nTo verify: run /hooks in your agent.");
+  console.log(`Hooks: ${names.join(", ")}`);
 }
 
 /** Remove hooks from agent config files. */
