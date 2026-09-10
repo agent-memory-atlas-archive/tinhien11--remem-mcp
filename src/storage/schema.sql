@@ -184,7 +184,7 @@ CREATE TABLE IF NOT EXISTS persona (
   content    TEXT NOT NULL,
   updated_at INTEGER NOT NULL,
   session_key TEXT,
-  PRIMARY KEY (team_id, agent_id, user_id)
+  PRIMARY KEY (team_id, agent_id, user_id, session_key)
 );
 CREATE INDEX IF NOT EXISTS idx_persona_session ON persona (session_key, team_id, user_id);
 

@@ -970,6 +970,10 @@ export class SQLiteBackend implements StorageBackend {
    * projects shared one persona. This caused cross-project tag pollution
    * (e.g., bugbounty tags appearing in AZR persona). Adding session_key
    * scoping lets each project maintain its own persona.
+   *
+   * Since SQLite can't ALTER a PRIMARY KEY, we rebuild the table: create a
+   * temp table with the new schema, copy data (legacy rows get NULL session_key),
+   * drop old, rename new.
    */
   private migrateV15ToV16(): void {
     // Guard: persona table is created by migrateV2ToV3. Skip if it doesn't exist.
@@ -983,11 +987,23 @@ export class SQLiteBackend implements StorageBackend {
     const cols = this.db.prepare("PRAGMA table_info(persona)").all() as { name: string }[];
     const colNames = new Set(cols.map((c) => c.name));
     if (!colNames.has("session_key")) {
-      this.db.exec("ALTER TABLE persona ADD COLUMN session_key TEXT");
-      // Create index for session_key-scoped persona lookups
-      this.db.exec(
-        "CREATE INDEX IF NOT EXISTS idx_persona_session ON persona (session_key, team_id, user_id)",
-      );
+      // Rebuild table with session_key in PRIMARY KEY
+      this.db.exec(`
+        CREATE TABLE persona_v16 (
+          team_id    TEXT NOT NULL,
+          agent_id   TEXT NOT NULL,
+          user_id    TEXT NOT NULL,
+          content    TEXT NOT NULL,
+          updated_at INTEGER NOT NULL,
+          session_key TEXT,
+          PRIMARY KEY (team_id, agent_id, user_id, session_key)
+        );
+        INSERT INTO persona_v16 (team_id, agent_id, user_id, content, updated_at, session_key)
+        SELECT team_id, agent_id, user_id, content, updated_at, NULL FROM persona;
+        DROP TABLE persona;
+        ALTER TABLE persona_v16 RENAME TO persona;
+        CREATE INDEX IF NOT EXISTS idx_persona_session ON persona (session_key, team_id, user_id);
+      `);
     }
     console.error("[remem-mcp] Migrated schema v15 → v16 (persona session_key scoping)");
   }
@@ -2337,19 +2353,14 @@ export class SQLiteBackend implements StorageBackend {
     content: string,
     sessionKey?: string,
   ): Promise<void> {
-    // Use a composite key that includes session_key for per-project personas.
-    // The PRIMARY KEY is (team_id, agent_id, user_id) — we can't change it
-    // without a table rebuild, so we use INSERT OR REPLACE with a WHERE
-    // clause to scope by session_key.
+    // PK is (team_id, agent_id, user_id, session_key) — session_key is part of
+    // the key, so per-project personas coexist. NULL session_key is for legacy.
     if (sessionKey) {
-      // Delete existing row for this session_key, then insert
-      this.db
-        .prepare("DELETE FROM persona WHERE team_id = ? AND user_id = ? AND session_key = ?")
-        .run(teamId, userId, sessionKey);
       this.db
         .prepare(
           `INSERT INTO persona (team_id, agent_id, user_id, content, updated_at, session_key)
-           VALUES (?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(team_id, agent_id, user_id, session_key) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
         )
         .run(teamId, agentId, userId, content, Date.now(), sessionKey);
     } else {
@@ -2357,7 +2368,7 @@ export class SQLiteBackend implements StorageBackend {
         .prepare(
           `INSERT INTO persona (team_id, agent_id, user_id, content, updated_at)
            VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(team_id, agent_id, user_id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
+           ON CONFLICT(team_id, agent_id, user_id, session_key) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
         )
         .run(teamId, agentId, userId, content, Date.now());
     }

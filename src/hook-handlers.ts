@@ -3981,10 +3981,12 @@ function ensureSchema(db: Database.Database): void {
   )`);
   db.exec(`CREATE TABLE IF NOT EXISTS persona (
     team_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
     content TEXT NOT NULL,
     updated_at INTEGER NOT NULL,
-    PRIMARY KEY (team_id, user_id)
+    session_key TEXT,
+    PRIMARY KEY (team_id, agent_id, user_id, session_key)
   )`);
   db.exec(`CREATE TABLE IF NOT EXISTS skills (
     id TEXT PRIMARY KEY,
