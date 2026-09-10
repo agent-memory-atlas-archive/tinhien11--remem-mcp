@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import Database from "better-sqlite3";
 import { SQLiteBackend } from "../storage/sqlite.js";
 
@@ -15,16 +16,21 @@ export async function personaCommand(dbPath: string, flags: Record<string, strin
     const teamId = flags["team-id"] ?? "default";
     const agentId = flags["agent-id"] ?? "unknown";
     const userId = flags["user-id"] ?? "default";
+    const sessionKey =
+      flags["session-key"] ??
+      (process.env.REMEM_SESSION_KEY
+        ? process.env.REMEM_SESSION_KEY
+        : createHash("sha256").update(process.cwd()).digest("hex").slice(0, 16));
 
     if (flags.clear !== undefined) {
-      await storage.writePersona(teamId, agentId, userId, "");
+      await storage.writePersona(teamId, agentId, userId, "", sessionKey);
       console.log("Persona cleared.");
       return;
     }
 
     if (flags.set) {
       // Read existing, append/update
-      const existing = await storage.readPersona(teamId, agentId, userId);
+      const existing = await storage.readPersona(teamId, agentId, userId, sessionKey);
       const entry = flags.set;
       const [trait] = entry.split(":");
       let content: string;
@@ -44,19 +50,26 @@ export async function personaCommand(dbPath: string, flags: Record<string, strin
       } else {
         content = entry;
       }
-      await storage.writePersona(teamId, agentId, userId, content);
+      await storage.writePersona(teamId, agentId, userId, content, sessionKey);
       console.log(`Persona updated: ${entry}`);
       return;
     }
 
-    // Read — query any agent_id (persona is user-level, not agent-level)
+    // Read — query session_key-scoped persona first, fall back to legacy
     const db = new Database(dbPath, { readonly: true });
     try {
-      const row = db
+      let row = db
         .prepare(
-          "SELECT content FROM persona WHERE team_id = ? AND user_id = ? ORDER BY updated_at DESC LIMIT 1",
+          "SELECT content FROM persona WHERE team_id = ? AND user_id = ? AND session_key = ? ORDER BY updated_at DESC LIMIT 1",
         )
-        .get(teamId, userId) as { content: string } | undefined;
+        .get(teamId, userId, sessionKey) as { content: string } | undefined;
+      if (!row) {
+        row = db
+          .prepare(
+            "SELECT content FROM persona WHERE team_id = ? AND user_id = ? AND (session_key IS NULL OR session_key = '') ORDER BY updated_at DESC LIMIT 1",
+          )
+          .get(teamId, userId) as { content: string } | undefined;
+      }
       if (!row || !row.content) {
         console.log('No persona set. Use --set "trait: value" to add one.');
         return;

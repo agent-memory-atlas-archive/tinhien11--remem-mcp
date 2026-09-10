@@ -301,6 +301,7 @@ export interface StorageBackend {
     agentId?: string;
     userId?: string;
     captureId?: string;
+    sessionKey?: string;
     limit?: number;
     offset?: number;
   }): Promise<AtomEntry[]>;
@@ -322,8 +323,8 @@ export interface StorageBackend {
   getScenario(id: string): Promise<ScenarioEntry | null>;
 
   // L3 persona
-  readPersona(teamId: string, agentId: string, userId: string): Promise<PersonaEntry | null>;
-  writePersona(teamId: string, agentId: string, userId: string, content: string): Promise<void>;
+  readPersona(teamId: string, agentId: string, userId: string, sessionKey?: string): Promise<PersonaEntry | null>;
+  writePersona(teamId: string, agentId: string, userId: string, content: string, sessionKey?: string): Promise<void>;
 
   // Knowledge
   putKnowledge(entry: KnowledgeEntry): Promise<void>;

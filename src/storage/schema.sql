@@ -176,15 +176,17 @@ CREATE INDEX IF NOT EXISTS idx_mutation_action ON mutation_log (action);
 CREATE INDEX IF NOT EXISTS idx_mutation_capture ON mutation_log (capture_id);
 CREATE INDEX IF NOT EXISTS idx_mutation_created ON mutation_log (created_at);
 
--- L3: Persona (long-term user profile, one per team/agent/user)
+-- L3: Persona (long-term user profile, one per team/agent/user/session)
 CREATE TABLE IF NOT EXISTS persona (
   team_id    TEXT NOT NULL,
   agent_id   TEXT NOT NULL,
   user_id    TEXT NOT NULL,
   content    TEXT NOT NULL,
   updated_at INTEGER NOT NULL,
+  session_key TEXT,
   PRIMARY KEY (team_id, agent_id, user_id)
 );
+CREATE INDEX IF NOT EXISTS idx_persona_session ON persona (session_key, team_id, user_id);
 
 -- Knowledge assets (wiki, code-graph) registered by the team
 CREATE TABLE IF NOT EXISTS knowledge (

@@ -1880,11 +1880,13 @@ async function handleRecall(
   }
 
   // Augment with L2 scenarios (high-signal summaries, ~100 tokens)
+  // Scoped to the current session_key so cross-project scenarios don't leak.
   try {
     const scenarios = await opts.storage.listScenarios({
       teamId,
       agentId,
       userId,
+      sessionKey,
       limit: 3,
     });
     if (scenarios.length > 0) {
@@ -4408,6 +4410,7 @@ async function handlePersonaUpdate(
   const value = args.value as string;
   const { teamId, userId } = extractTenant(args);
   const agentId = (args.agent_id as string) ?? detectAgentId();
+  const sessionKey = (args.session_key as string) ?? defaultSessionKey();
 
   if (!trait || !value) {
     return {
@@ -4420,7 +4423,7 @@ async function handlePersonaUpdate(
   const uid = userId ?? "default";
 
   // Read existing persona, append/update trait
-  const existing = await opts.storage.readPersona(tid, agentId, uid);
+  const existing = await opts.storage.readPersona(tid, agentId, uid, sessionKey);
   let content: string;
   if (existing) {
     // Parse existing content as "trait: value" lines, update or append
@@ -4438,7 +4441,7 @@ async function handlePersonaUpdate(
   }
 
   try {
-    await opts.storage.writePersona(tid, agentId, uid, content);
+    await opts.storage.writePersona(tid, agentId, uid, content, sessionKey);
   } catch (err) {
     return { content: [{ type: "text", text: `Error: ${err}` }], isError: true };
   }

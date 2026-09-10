@@ -115,8 +115,9 @@ export async function runPipelineWorker(
     }
 
     // 2. L1→L2: Auto-consolidate atoms by topic (tag-based, fallback to keyword)
-    // Don't filter by team_id — legacy atoms have NULL team_id
-    const atoms = await storage.listAtoms({ limit: 200 });
+    // Filter atoms by session_key so scenarios contain only current-project facts.
+    // Without this filter, atoms from other projects leak into AZR scenarios.
+    const atoms = await storage.listAtoms({ limit: 200, sessionKey: opts.sessionKey });
     const groups = new Map<string, typeof atoms>();
     for (const a of atoms) {
       // Group by significant keywords in fact (not just first word)
@@ -130,22 +131,24 @@ export async function runPipelineWorker(
       groups.get(key)!.push(a);
     }
 
-    // Check existing scenarios to avoid duplicates
-    const existingScenarios = await storage.listScenarios({ limit: 100 });
+    // Check existing scenarios to avoid duplicates.
+    // Only check scenarios for the current session_key — legacy NULL session_key
+    // scenarios must not block creation of new project-scoped scenarios.
+    const existingScenarios = await storage.listScenarios({
+      limit: 100,
+      sessionKey: opts.sessionKey,
+    });
     const existingTopics = new Set(existingScenarios.flatMap((s) => s.personaTags ?? []));
 
     for (const [topic, groupAtoms] of groups) {
       if (groupAtoms.length < consolidateThreshold) continue;
       if (existingTopics.has(topic)) continue; // skip if scenario already exists for topic
-      const summary = groupAtoms
-        .slice(0, 5)
-        .map((a) => a.fact)
-        .join("; ");
+      const summary = buildScenarioSummary(topic, groupAtoms);
       const id = generateId();
       await storage.putScenario({
         id,
         atomIds: groupAtoms.map((a) => a.id),
-        summary: summary.slice(0, 300),
+        summary,
         personaTags: [topic],
         createdAt: Date.now(),
         sessionKey: opts.sessionKey,
@@ -154,13 +157,17 @@ export async function runPipelineWorker(
     }
 
     // 3. L2→L3: Auto-persona from repeated tags in captures
+    // Filter by session_key so persona only reflects current-project tags.
+    // Without this filter, tags from other projects (e.g. bugbounty, doordash)
+    // pollute the persona for the current project.
     const tagCounts = db
       .prepare(
         `SELECT tags FROM captures
          WHERE (team_id = ? OR team_id IS NULL OR team_id = 'default')
+           AND session_key = ?
          ORDER BY created_at DESC LIMIT 100`,
       )
-      .all(teamId) as Array<{ tags: string | null }>;
+      .all(teamId, opts.sessionKey) as Array<{ tags: string | null }>;
 
     const tagFreq = new Map<string, number>();
     for (const row of tagCounts) {
@@ -175,25 +182,28 @@ export async function runPipelineWorker(
       }
     }
 
-    // Find tags that appear 2+ times and aren't already in persona
-    // Read persona by team_id+user_id only (same as hooks, ignores agent_id)
-    const existingPersonaRow = db
-      .prepare(
-        "SELECT content FROM persona WHERE team_id = ? AND user_id = ? ORDER BY updated_at DESC LIMIT 1",
-      )
-      .get(teamId, userId) as { content: string } | undefined;
-    const existingContent = existingPersonaRow?.content ?? "";
-    const repeatedTags = Array.from(tagFreq.entries())
-      .filter(([tag, count]) => count >= personaThreshold && !existingContent.includes(tag))
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3);
+    // Recompute tag-count portion of persona from scratch each run.
+    // Previous approach used !existingContent.includes(tag) which froze counts
+    // forever once a tag appeared. Now we preserve manual traits (lines not
+    // ending with "occurrences") and replace the auto-generated tag counts.
+    const existingPersona = await storage.readPersona(teamId, "default", userId, opts.sessionKey);
+    const existingContent = existingPersona?.content ?? "";
 
-    if (repeatedTags.length > 0) {
-      const newTraits = repeatedTags.map(([tag, count]) => `${tag}: ${count} occurrences`);
-      const updatedContent = existingContent
-        ? `${existingContent}\n${newTraits.join("\n")}`
-        : newTraits.join("\n");
-      await storage.writePersona(teamId, "default", userId, updatedContent);
+    // Preserve manual traits — lines that don't end with "occurrences"
+    const manualTraits = existingContent
+      .split("\n")
+      .filter((line) => line.trim() && !line.trim().endsWith("occurrences"));
+
+    // Recompute top tags with current counts
+    const topTags = Array.from(tagFreq.entries())
+      .filter(([, count]) => count >= personaThreshold)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([tag, count]) => `${tag}: ${count} occurrences`);
+
+    if (topTags.length > 0) {
+      const updatedContent = [...manualTraits, ...topTags].join("\n");
+      await storage.writePersona(teamId, "default", userId, updatedContent, opts.sessionKey);
       result.personaUpdated = true;
     }
   } finally {
@@ -201,4 +211,33 @@ export async function runPipelineWorker(
   }
 
   return result;
+}
+
+/**
+ * Build a concise scenario summary from a group of atoms.
+ *
+ * Dedupes similar facts (e.g., multiple "Error: <same cmd> fails" atoms),
+ * truncates each to ~80 chars, and caps the total at ~250 chars to keep
+ * the L2 injection budget around 100 tokens.
+ */
+function buildScenarioSummary(
+  topic: string,
+  atoms: Array<{ fact: string }>,
+): string {
+  const seen = new Set<string>();
+  const facts: string[] = [];
+  for (const a of atoms) {
+    // Normalize for dedup: strip "Error: " prefix, lowercase, take first 60 chars
+    const normalized = a.fact
+      .replace(/^Error:\s*/i, "")
+      .toLowerCase()
+      .slice(0, 60);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    // Truncate each fact to 80 chars
+    facts.push(a.fact.slice(0, 80));
+    if (facts.length >= 5) break;
+  }
+  const body = facts.join("; ");
+  return `${topic}: ${body}`.slice(0, 300);
 }

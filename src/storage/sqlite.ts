@@ -153,7 +153,7 @@ export function stripQueryProperNouns(query: string): string {
 }
 
 /** Current schema version. */
-const CURRENT_SCHEMA_VERSION = 14;
+const CURRENT_SCHEMA_VERSION = 16;
 
 /**
  * Evergreen tags: captures with any of these tags are exempt from temporal
@@ -363,6 +363,13 @@ export class SQLiteBackend implements StorageBackend {
           this.migrateV5ToV6();
           this.migrateV6ToV7();
           this.migrateV7ToV8();
+          this.migrateV8ToV9();
+          this.migrateV9ToV10();
+          this.migrateV11ToV12();
+          this.migrateV12ToV13();
+          this.migrateV13ToV14();
+          this.migrateV14ToV15();
+          this.migrateV15ToV16();
           // Now run the full schema to create any remaining tables/triggers/indexes
           this.runSchema();
           this.writeSchemaVersion(CURRENT_SCHEMA_VERSION);
@@ -500,6 +507,29 @@ export class SQLiteBackend implements StorageBackend {
         this.migrateV13ToV14();
         this.runSchema();
         this.writeSchemaVersion(14);
+      })();
+    }
+    if (currentVersion < 15) {
+      migrationsRan = true;
+      this.backupDatabase(dbPath, 14);
+      this.db.transaction(() => {
+        // migrateV14ToV15 must run BEFORE runSchema: it ALTERs the existing
+        // skills table to add v9 columns. runSchema's CREATE TABLE IF NOT EXISTS
+        // is a no-op on the existing table (created by migrateV2ToV3 with only
+        // 8 columns), so the v9 columns (steps, trigger_conditions, etc.) are
+        // never added without this migration.
+        this.migrateV14ToV15();
+        this.runSchema();
+        this.writeSchemaVersion(15);
+      })();
+    }
+    if (currentVersion < 16) {
+      migrationsRan = true;
+      this.backupDatabase(dbPath, 15);
+      this.db.transaction(() => {
+        this.migrateV15ToV16();
+        this.runSchema();
+        this.writeSchemaVersion(16);
       })();
     }
     this.rebuildFtsIfNeeded(migrationsRan);
@@ -772,6 +802,14 @@ export class SQLiteBackend implements StorageBackend {
 
   /** Migrate schema v8 → v9: add CodeGraph call resolution columns (module_path, confidence, call_type). */
   private migrateV8ToV9(): void {
+    // Guard: symbols/calls are created by runSchema(). Skip if they don't exist.
+    const symbolsExists = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='symbols'")
+      .get() as { name: string } | undefined;
+    if (!symbolsExists) {
+      console.error("[remem-mcp] Migrated schema v8 → v9 (symbols table not yet created, skipping)");
+      return;
+    }
     let addedAny = false;
     try {
       this.db.exec("ALTER TABLE symbols ADD COLUMN module_path TEXT");
@@ -847,6 +885,16 @@ export class SQLiteBackend implements StorageBackend {
    * v12 → v13: Add weight column to memory_links for Hebbian co-retrieval strengthening.
    */
   private migrateV12ToV13(): void {
+    // Guard: memory_links is created by runSchema(). In the old-database
+    // migration path, runSchema() may not have created it (e.g. if schema.sql
+    // couldn't be found). Skip if the table doesn't exist.
+    const tableExists = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memory_links'")
+      .get() as { name: string } | undefined;
+    if (!tableExists) {
+      console.error("[remem-mcp] Migrated schema v12 → v13 (memory_links not yet created, skipping)");
+      return;
+    }
     const cols = this.db.prepare("PRAGMA table_info(memory_links)").all() as { name: string }[];
     const colNames = new Set(cols.map((c) => c.name));
     if (!colNames.has("weight")) {
@@ -861,6 +909,14 @@ export class SQLiteBackend implements StorageBackend {
    * NULL session_key and are excluded from hook injection (no cross-project leak).
    */
   private migrateV13ToV14(): void {
+    // Guard: scenarios table is created by migrateV2ToV3. Skip if it doesn't exist.
+    const tableExists = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='scenarios'")
+      .get() as { name: string } | undefined;
+    if (!tableExists) {
+      console.error("[remem-mcp] Migrated schema v13 → v14 (scenarios table not yet created, skipping)");
+      return;
+    }
     const cols = this.db.prepare("PRAGMA table_info(scenarios)").all() as { name: string }[];
     const colNames = new Set(cols.map((c) => c.name));
     if (!colNames.has("session_key")) {
@@ -870,6 +926,70 @@ export class SQLiteBackend implements StorageBackend {
       "CREATE INDEX IF NOT EXISTS idx_scenarios_session ON scenarios (session_key, created_at DESC)",
     );
     console.error("[remem-mcp] Migrated schema v13 → v14 (scenario session_key scoping)");
+  }
+
+  /**
+   * v14 → v15: Add v9 skill columns to the existing skills table.
+   *
+   * The skills table was created by migrateV2ToV3 with only 8 columns
+   * (id, team_id, agent_id, name, description, content, version, created_at,
+   * updated_at). The v9 columns (trigger_conditions, steps, validation_rules,
+   * source_capture_ids, archived) are defined in schema.sql's CREATE TABLE IF
+   * NOT EXISTS, but that statement is a no-op on the existing table. Without
+   * this migration, every putSkill / getSkillContext / skill injection fails
+   * with SqliteError: no such column: steps.
+   */
+  private migrateV14ToV15(): void {
+    // Guard: skills table is created by migrateV2ToV3. Skip if it doesn't exist.
+    const tableExists = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='skills'")
+      .get() as { name: string } | undefined;
+    if (!tableExists) {
+      console.error("[remem-mcp] Migrated schema v14 → v15 (skills table not yet created, skipping)");
+      return;
+    }
+    const cols = this.db.prepare("PRAGMA table_info(skills)").all() as { name: string }[];
+    const colNames = new Set(cols.map((c) => c.name));
+    const addColumnIfMissing = (column: string, definition: string) => {
+      if (!colNames.has(column)) {
+        this.db.exec(`ALTER TABLE skills ADD COLUMN ${column} ${definition}`);
+      }
+    };
+    addColumnIfMissing("trigger_conditions", "TEXT");
+    addColumnIfMissing("steps", "TEXT");
+    addColumnIfMissing("validation_rules", "TEXT");
+    addColumnIfMissing("source_capture_ids", "TEXT");
+    addColumnIfMissing("archived", "INTEGER NOT NULL DEFAULT 0");
+    console.error("[remem-mcp] Migrated schema v14 → v15 (skills table v9 columns)");
+  }
+
+  /**
+   * v15 → v16: Add session_key column to persona table for per-project personas.
+   *
+   * Previously persona was keyed by (team_id, agent_id, user_id) only — all
+   * projects shared one persona. This caused cross-project tag pollution
+   * (e.g., bugbounty tags appearing in AZR persona). Adding session_key
+   * scoping lets each project maintain its own persona.
+   */
+  private migrateV15ToV16(): void {
+    // Guard: persona table is created by migrateV2ToV3. Skip if it doesn't exist.
+    const tableExists = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='persona'")
+      .get() as { name: string } | undefined;
+    if (!tableExists) {
+      console.error("[remem-mcp] Migrated schema v15 → v16 (persona table not yet created, skipping)");
+      return;
+    }
+    const cols = this.db.prepare("PRAGMA table_info(persona)").all() as { name: string }[];
+    const colNames = new Set(cols.map((c) => c.name));
+    if (!colNames.has("session_key")) {
+      this.db.exec("ALTER TABLE persona ADD COLUMN session_key TEXT");
+      // Create index for session_key-scoped persona lookups
+      this.db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_persona_session ON persona (session_key, team_id, user_id)",
+      );
+    }
+    console.error("[remem-mcp] Migrated schema v15 → v16 (persona session_key scoping)");
   }
 
   async put(entry: CaptureEntry): Promise<void> {
@@ -2018,28 +2138,37 @@ export class SQLiteBackend implements StorageBackend {
     agentId?: string;
     userId?: string;
     captureId?: string;
+    sessionKey?: string;
     limit?: number;
     offset?: number;
   }): Promise<AtomEntry[]> {
-    let sql = "SELECT * FROM atoms WHERE 1=1";
+    let sql = `SELECT a.* FROM atoms a`;
     const params: unknown[] = [];
+    if (opts.sessionKey) {
+      sql += ` JOIN captures c ON a.capture_id = c.id`;
+    }
+    sql += ` WHERE 1=1`;
+    if (opts.sessionKey) {
+      sql += ` AND c.session_key = ?`;
+      params.push(opts.sessionKey);
+    }
     if (opts.teamId) {
-      sql += " AND team_id = ?";
+      sql += " AND a.team_id = ?";
       params.push(opts.teamId);
     }
     if (opts.agentId) {
-      sql += " AND agent_id = ?";
+      sql += " AND a.agent_id = ?";
       params.push(opts.agentId);
     }
     if (opts.userId) {
-      sql += " AND user_id = ?";
+      sql += " AND a.user_id = ?";
       params.push(opts.userId);
     }
     if (opts.captureId) {
-      sql += " AND capture_id = ?";
+      sql += " AND a.capture_id = ?";
       params.push(opts.captureId);
     }
-    sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
+    sql += " ORDER BY a.created_at DESC LIMIT ? OFFSET ?";
     params.push(opts.limit ?? 20, opts.offset ?? 0);
     const rows = this.db.prepare(sql).all(...params) as AtomDbRow[];
     return rows.map((r) => ({
@@ -2171,9 +2300,25 @@ export class SQLiteBackend implements StorageBackend {
 
   // ─── L3 persona ─────────────────────────────────────────────
 
-  async readPersona(teamId: string, agentId: string, userId: string): Promise<PersonaEntry | null> {
+  async readPersona(teamId: string, agentId: string, userId: string, sessionKey?: string): Promise<PersonaEntry | null> {
+    // Try session_key-scoped persona first, fall back to legacy NULL session_key
+    if (sessionKey) {
+      const scopedRow = this.db
+        .prepare("SELECT * FROM persona WHERE team_id = ? AND user_id = ? AND session_key = ? ORDER BY updated_at DESC LIMIT 1")
+        .get(teamId, userId, sessionKey) as PersonaDbRow | undefined;
+      if (scopedRow) {
+        return {
+          teamId: scopedRow.team_id,
+          agentId: scopedRow.agent_id,
+          userId: scopedRow.user_id,
+          content: scopedRow.content,
+          updatedAt: scopedRow.updated_at,
+        };
+      }
+    }
+    // Fallback: legacy persona without session_key
     const row = this.db
-      .prepare("SELECT * FROM persona WHERE team_id = ? AND agent_id = ? AND user_id = ?")
+      .prepare("SELECT * FROM persona WHERE team_id = ? AND agent_id = ? AND user_id = ? AND (session_key IS NULL OR session_key = '') ORDER BY updated_at DESC LIMIT 1")
       .get(teamId, agentId, userId) as PersonaDbRow | undefined;
     if (!row) return null;
     return {
@@ -2190,14 +2335,32 @@ export class SQLiteBackend implements StorageBackend {
     agentId: string,
     userId: string,
     content: string,
+    sessionKey?: string,
   ): Promise<void> {
-    this.db
-      .prepare(
-        `INSERT INTO persona (team_id, agent_id, user_id, content, updated_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(team_id, agent_id, user_id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
-      )
-      .run(teamId, agentId, userId, content, Date.now());
+    // Use a composite key that includes session_key for per-project personas.
+    // The PRIMARY KEY is (team_id, agent_id, user_id) — we can't change it
+    // without a table rebuild, so we use INSERT OR REPLACE with a WHERE
+    // clause to scope by session_key.
+    if (sessionKey) {
+      // Delete existing row for this session_key, then insert
+      this.db
+        .prepare("DELETE FROM persona WHERE team_id = ? AND user_id = ? AND session_key = ?")
+        .run(teamId, userId, sessionKey);
+      this.db
+        .prepare(
+          `INSERT INTO persona (team_id, agent_id, user_id, content, updated_at, session_key)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(teamId, agentId, userId, content, Date.now(), sessionKey);
+    } else {
+      this.db
+        .prepare(
+          `INSERT INTO persona (team_id, agent_id, user_id, content, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(team_id, agent_id, user_id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
+        )
+        .run(teamId, agentId, userId, content, Date.now());
+    }
   }
 
   // ─── Knowledge ──────────────────────────────────────────────

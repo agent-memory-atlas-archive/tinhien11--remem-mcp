@@ -13,6 +13,7 @@ interface SessionBinding {
   agentId?: string;
   userId?: string;
   taskId?: string;
+  sessionKey?: string;
 }
 
 interface Message {
@@ -93,6 +94,7 @@ export async function injectMemory(
       const allScenarios = await storage.listScenarios({
         teamId: binding.teamId,
         agentId: binding.agentId,
+        sessionKey: binding.sessionKey,
         limit: 2,
       });
       scenarios = allScenarios.map((s) => s.summary);
@@ -105,7 +107,7 @@ export async function injectMemory(
   let persona: string | null = null;
   if (binding.teamId && binding.agentId && binding.userId) {
     try {
-      const p = await storage.readPersona(binding.teamId, binding.agentId, binding.userId);
+      const p = await storage.readPersona(binding.teamId, binding.agentId, binding.userId, binding.sessionKey);
       persona = p?.content ?? null;
     } catch {
       // best-effort

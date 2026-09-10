@@ -576,12 +576,20 @@ export function hookRecall(dbPath: string): void {
       }
 
       // Inject L3 persona (user preferences, ~50 tokens)
+      // Try session_key-scoped persona first, fall back to legacy NULL
       try {
-        const personaRow = db
+        let personaRow = db
           .prepare(
-            "SELECT content FROM persona WHERE team_id = ? AND user_id = ? ORDER BY updated_at DESC LIMIT 1",
+            "SELECT content FROM persona WHERE team_id = ? AND user_id = ? AND session_key = ? ORDER BY updated_at DESC LIMIT 1",
           )
-          .get("default", "default") as { content: string } | undefined;
+          .get("default", "default", sessionKey) as { content: string } | undefined;
+        if (!personaRow) {
+          personaRow = db
+            .prepare(
+              "SELECT content FROM persona WHERE team_id = ? AND user_id = ? AND (session_key IS NULL OR session_key = '') ORDER BY updated_at DESC LIMIT 1",
+            )
+            .get("default", "default") as { content: string } | undefined;
+        }
         if (personaRow && personaRow.content) {
           lines.push("");
           lines.push(`## Persona (L3)`);
@@ -971,12 +979,20 @@ export function hookUserPromptSubmit(dbPath: string): void {
       }
 
       // Inject L3 persona (user preferences, ~50 tokens)
+      // Try session_key-scoped persona first, fall back to legacy NULL
       try {
-        const personaRow = db
+        let personaRow = db
           .prepare(
-            "SELECT content FROM persona WHERE team_id = ? AND user_id = ? ORDER BY updated_at DESC LIMIT 1",
+            "SELECT content FROM persona WHERE team_id = ? AND user_id = ? AND session_key = ? ORDER BY updated_at DESC LIMIT 1",
           )
-          .get("default", "default") as { content: string } | undefined;
+          .get("default", "default", sessionKey) as { content: string } | undefined;
+        if (!personaRow) {
+          personaRow = db
+            .prepare(
+              "SELECT content FROM persona WHERE team_id = ? AND user_id = ? AND (session_key IS NULL OR session_key = '') ORDER BY updated_at DESC LIMIT 1",
+            )
+            .get("default", "default") as { content: string } | undefined;
+        }
         if (personaRow && personaRow.content) {
           if (recallContext) {
             recallContext += `\n\n## Persona (L3)\n${personaRow.content}`;

@@ -198,12 +198,12 @@ describe("v13 features", () => {
   // ─── Schema v13 migration ───────────────────────────────────────
 
   describe("schema v13", () => {
-    it("schema version is 14", () => {
+    it("schema version is 16", () => {
       const db = storage.getDatabase();
       const row = db
         .prepare("SELECT MAX(version) as version FROM schema_version")
         .get() as { version: number };
-      expect(row.version).toBe(14);
+      expect(row.version).toBe(16);
     });
 
     it("memory_links has weight column with default 1.0", async () => {
