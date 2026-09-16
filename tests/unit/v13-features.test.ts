@@ -203,7 +203,7 @@ describe("v13 features", () => {
       const row = db
         .prepare("SELECT MAX(version) as version FROM schema_version")
         .get() as { version: number };
-      expect(row.version).toBe(16);
+      expect(row.version).toBe(17);
     });
 
     it("memory_links has weight column with default 1.0", async () => {

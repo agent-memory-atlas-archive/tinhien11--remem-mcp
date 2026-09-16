@@ -226,3 +226,25 @@ Before embedding, a preamble `[type]. tags: tag1, tag2.` is prepended to content
 
 ### Auto-Feedback from Corrections
 `confirm()` MCP tool now auto-records `helpful` feedback. `correct()` auto-records `wrong` feedback. Closes the feedback flywheel without requiring explicit `feedback()` calls.
+
+## v17: Temporal Validity + Entry Points + Causal Links + Provenance
+
+### Temporal Validity (SodaMem-inspired)
+Captures now have `valid_from` (when the fact became true, defaults to `createdAt`) and `valid_until` (when it stopped being true). `supersede()` sets `valid_until` on the loser. Search (BM25, vector, entity, raw fallback) filters out facts past `valid_until`. This prevents stale config values, API endpoints, and version numbers from polluting search results.
+
+**Source:** SodaMem (arXiv:2608.08055) — evidence-grounded temporal graph memory.
+
+### CodeGraph Entry Points
+`codegraph_entry_points` MCP tool finds main functions, HTTP handlers (`handleGet*`, `postUser`), CLI commands (`*Command`), event handlers (`onClick`, `onLoad`), and controllers (`*Controller`, `*Handler`). Uses per-language regex patterns across 9 languages.
+
+**Source:** codegraph-ai's `find_entry_points` tool.
+
+### Causal Link Auto-Extraction (MAGMA-inspired)
+Detects causal language ("caused by", "led to", "resulted in", "due to", "fixed by", "root cause", "triggered by") in captures and auto-creates `cause-effect` memory_links to nearby captures with shared tags. Direction: older capture is the cause, newer is the effect. Links fire if either the new or nearby capture has causal language.
+
+**Source:** MAGMA (ACL 2026) — multi-graph agentic memory with causal edges.
+
+### Provenance Tracking
+`source_ref` column on captures stores the originating tool call or conversation turn (e.g., `"bash:git status"`, `"tool:codegraph_search"`). Populated from `metadata.source` on capture. Enables traceability: "where did this memory come from?"
+
+**Source:** SodaMem's `FactEvent → SourceSpan → RawTurn` provenance chain.

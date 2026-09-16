@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
  * - Claude Code: ~/.claude.json → mcpServers.remem-mcp
  * - Devin CLI:   ~/.config/devin/mcp_config.json → mcpServers.remem-mcp
  * - Cursor:      ~/.cursor/mcp.json → mcpServers.remem-mcp
+ * - ZCode:       ~/.zcode/cli/config.json → mcp.servers.remem-mcp (nested under "mcp")
  * - Codex CLI:   ~/.codex/config.toml → [mcp_servers.remem-mcp] (TOML, skip if no parser)
  */
 
@@ -50,6 +51,48 @@ const JSON_TARGETS: JsonTarget[] = [
     key: "mcpServers",
   },
 ];
+
+/** Register the MCP server in ZCode's config (~/.zcode/cli/config.json).
+ *
+ * ZCode nests servers under `mcp.servers` (not a top-level `mcpServers` key)
+ * and its server schema is strict — an unknown key silently drops the server.
+ * Only canonical stdio fields are written: type, command, args, env.
+ */
+function registerZcodeServer(): boolean {
+  const configPath = join(homedir(), ".zcode", "cli", "config.json");
+  const config = readJsonConfig(configPath);
+
+  const mcp = (config.mcp as Record<string, unknown>) ?? {};
+  const servers = (mcp.servers as Record<string, unknown>) ?? {};
+
+  if (servers["remem-mcp"]) {
+    return true; // already registered
+  }
+
+  servers["remem-mcp"] = MCP_SERVER_ENTRY;
+  mcp.servers = servers;
+  config.mcp = mcp;
+
+  writeJsonConfig(configPath, config);
+  return true;
+}
+
+/** Safely read and parse a JSON config file. Returns {} if file doesn't exist or is invalid. */
+function readJsonConfig(path: string): Record<string, unknown> {
+  if (!existsSync(path)) return {};
+  try {
+    return JSON.parse(readFileSync(path, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+/** Write JSON config file, creating directories as needed. */
+function writeJsonConfig(path: string, data: unknown): void {
+  const dir = dirname(path);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, "utf-8");
+}
 
 /** Register MCP server in a JSON config file. */
 function registerJsonServer(target: JsonTarget): boolean {
@@ -111,6 +154,15 @@ export async function installMcpServer(): Promise<void> {
 
     if (registerJsonServer(target)) {
       names.push(target.name);
+    }
+  }
+
+  // ZCode: config lives at ~/.zcode/cli/config.json under mcp.servers.
+  // Register if the ~/.zcode data directory exists (ZCode has been run);
+  // registerZcodeServer creates cli/config.json if the desktop app hasn't.
+  if (existsSync(join(homedir(), ".zcode"))) {
+    if (registerZcodeServer()) {
+      names.push("ZCode");
     }
   }
 

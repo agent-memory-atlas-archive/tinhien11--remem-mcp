@@ -11,6 +11,7 @@ import {
 import {
   findCallees as cgFindCallees,
   findCallers as cgFindCallers,
+  findEntryPoints as cgFindEntryPoints,
   impactAnalysis as cgImpactAnalysis,
   indexDirectory as cgIndexDirectory,
   indexFile as cgIndexFile,
@@ -998,6 +999,31 @@ const TOOLS: Tool[] = [
       },
     },
   },
+  {
+    name: "codegraph_entry_points",
+    description:
+      "Find entry points in the codebase — main functions, HTTP handlers, CLI commands, " +
+      "event handlers. An entry point is called by external infrastructure (HTTP server, " +
+      "CLI framework, event loop) rather than by other code. " +
+      "Inspired by codegraph-ai's find_entry_points.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo_path: {
+          type: "string",
+          description: "The repository root path (absolute).",
+        },
+        team_id: { type: "string", description: "The team ID for isolation." },
+        limit: {
+          type: "integer",
+          default: 100,
+          maximum: 500,
+          description: "Maximum number of entry points to return.",
+        },
+      },
+      required: ["repo_path"],
+    },
+  },
   // ─── Wiki tools ───
   {
     name: "wiki_ingest",
@@ -1630,6 +1656,8 @@ export function createServer(opts: ServerOptions): Server {
         return handleCodegraphDetectChanges(args, opts);
       case "codegraph_stats":
         return handleCodegraphStats(args, opts);
+      case "codegraph_entry_points":
+        return handleCodegraphEntryPoints(args, opts);
       case "wiki_ingest":
         return handleWikiIngest(args, opts);
       case "wiki_search":
@@ -5018,6 +5046,38 @@ function handleCodegraphStats(
 
   return {
     content: [{ type: "text", text: lines.join("\n") }],
+  };
+}
+
+function handleCodegraphEntryPoints(
+  args: Record<string, unknown>,
+  opts: ServerOptions,
+): { content: Array<{ type: "text"; text: string }>; isError?: boolean } {
+  const repoPath = args.repo_path as string;
+  const teamId = (args.team_id as string) ?? undefined;
+  const limit = (args.limit as number) ?? 100;
+
+  if (!repoPath) {
+    return { content: [{ type: "text", text: "Error: repo_path is required." }], isError: true };
+  }
+
+  const db = getDb(opts);
+  const entryPoints = cgFindEntryPoints(db, { repoPath, teamId, limit });
+
+  if (entryPoints.length === 0) {
+    return { content: [{ type: "text", text: "No entry points found. Run codegraph_index first." }] };
+  }
+
+  const lines = entryPoints.map(
+    (s) => `${s.id}  ${s.kind.padEnd(10)}  L${s.lineStart}-${s.lineEnd}  ${s.name}  at  ${s.filePath}`,
+  );
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Found ${entryPoints.length} entry point(s) in ${repoPath}:\n${lines.join("\n")}`,
+      },
+    ],
   };
 }
 

@@ -153,7 +153,7 @@ export function stripQueryProperNouns(query: string): string {
 }
 
 /** Current schema version. */
-const CURRENT_SCHEMA_VERSION = 16;
+const CURRENT_SCHEMA_VERSION = 17;
 
 /**
  * Evergreen tags: captures with any of these tags are exempt from temporal
@@ -370,6 +370,7 @@ export class SQLiteBackend implements StorageBackend {
           this.migrateV13ToV14();
           this.migrateV14ToV15();
           this.migrateV15ToV16();
+          this.migrateV16ToV17();
           // Now run the full schema to create any remaining tables/triggers/indexes
           this.runSchema();
           this.writeSchemaVersion(CURRENT_SCHEMA_VERSION);
@@ -530,6 +531,15 @@ export class SQLiteBackend implements StorageBackend {
         this.migrateV15ToV16();
         this.runSchema();
         this.writeSchemaVersion(16);
+      })();
+    }
+    if (currentVersion < 17) {
+      migrationsRan = true;
+      this.backupDatabase(dbPath, 16);
+      this.db.transaction(() => {
+        this.migrateV16ToV17();
+        this.runSchema();
+        this.writeSchemaVersion(17);
       })();
     }
     this.rebuildFtsIfNeeded(migrationsRan);
@@ -1008,6 +1018,28 @@ export class SQLiteBackend implements StorageBackend {
     console.error("[remem-mcp] Migrated schema v15 → v16 (persona session_key scoping)");
   }
 
+  /**
+   * v16 → v17: Add temporal validity (valid_from, valid_until) and provenance (source_ref)
+   * columns to captures. SodaMem-inspired: supersede now closes the old version with valid_until.
+   * source_ref links a capture to its originating tool call or conversation turn.
+   */
+  private migrateV16ToV17(): void {
+    const cols = this.db.prepare("PRAGMA table_info(captures)").all() as { name: string }[];
+    const colNames = new Set(cols.map((c) => c.name));
+    if (!colNames.has("valid_from")) {
+      this.db.exec("ALTER TABLE captures ADD COLUMN valid_from INTEGER");
+    }
+    if (!colNames.has("valid_until")) {
+      this.db.exec("ALTER TABLE captures ADD COLUMN valid_until INTEGER");
+    }
+    if (!colNames.has("source_ref")) {
+      this.db.exec("ALTER TABLE captures ADD COLUMN source_ref TEXT");
+    }
+    // Backfill valid_from for existing captures (they became true at creation time)
+    this.db.exec("UPDATE captures SET valid_from = created_at WHERE valid_from IS NULL");
+    console.error("[remem-mcp] Migrated schema v16 → v17 (temporal validity + provenance)");
+  }
+
   async put(entry: CaptureEntry): Promise<void> {
     this.putInternal(entry);
   }
@@ -1035,8 +1067,8 @@ export class SQLiteBackend implements StorageBackend {
       if (dup) return false;
       this.db
         .prepare(
-          `INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata, team_id, user_id, task_id, trust_state, tier)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO captures (id, session_key, agent_id, type, content, content_hash, tags, created_at, metadata, team_id, user_id, task_id, trust_state, tier, valid_from, source_ref)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           entry.id,
@@ -1053,6 +1085,8 @@ export class SQLiteBackend implements StorageBackend {
           entry.taskId ?? null,
           entry.trustState ?? "candidate",
           tier,
+          entry.createdAt,  // valid_from = creation time (SodaMem: when the fact became true)
+          (entry.metadata?.source as string) ?? null,  // source_ref from metadata
         );
       // Store role-based messages inside the same transaction so a crash can't
       // orphan messages under a capture that didn't commit.
@@ -1077,6 +1111,8 @@ export class SQLiteBackend implements StorageBackend {
           this.putEntitiesInternal(entry.id, entities);
         }
         this.autoLinkCapture(entry.id, entry.tags, entities, entry.sessionKey);
+        // v17: Causal link auto-extraction (MAGMA-inspired)
+        this.extractCausalLinks(entry.id, entry.content, entry.tags, entry.sessionKey);
       } catch {
         // non-fatal — entity extraction + auto-linking are supplementary
       }
@@ -1513,8 +1549,9 @@ export class SQLiteBackend implements StorageBackend {
   ): { id: string; score: number }[] {
     const ftsQuery = this.escapeFtsQuery(query);
     if (!ftsQuery) return [];
-    const conditions = ["c.deleted_at IS NULL", "c.superseded_by IS NULL"];
-    const params: unknown[] = [];
+    const now = Date.now();
+    const conditions = ["c.deleted_at IS NULL", "c.superseded_by IS NULL", "(c.valid_until IS NULL OR c.valid_until > ?)"];
+    const params: unknown[] = [now];
     if (sessionKey) {
       conditions.push("c.session_key = ?");
       params.push(sessionKey);
@@ -1567,13 +1604,15 @@ export class SQLiteBackend implements StorageBackend {
     if (!ftsQuery) return [];
 
     let sql: string = "";
-    const params: unknown[] = [ftsQuery];
+    const now = Date.now();
+    const params: unknown[] = [ftsQuery, now];
     try {
       sql = `
       SELECT fts.id as id, bm25(captures_fts) as score
       FROM captures_fts fts
       JOIN captures c ON c.id = fts.id
       WHERE captures_fts MATCH ? AND c.deleted_at IS NULL AND c.trust_state != 'rejected' AND c.superseded_by IS NULL
+        AND (c.valid_until IS NULL OR c.valid_until > ?)
     `;
 
       if (sessionKey) {
@@ -1640,13 +1679,15 @@ export class SQLiteBackend implements StorageBackend {
     filters?: QueryOptions["filters"],
   ): RankedResult[] {
     const buffer = new Float32Array(embedding);
+    const now = Date.now();
     let sql = `
       SELECT vec.id as id, vec.distance as score
       FROM captures_vec vec
       JOIN captures c ON c.id = vec.id
       WHERE vec.embedding MATCH ? AND vec.k = ? AND c.deleted_at IS NULL AND c.trust_state != 'rejected' AND c.superseded_by IS NULL
+        AND (c.valid_until IS NULL OR c.valid_until > ?)
     `;
-    const params: unknown[] = [Buffer.from(buffer.buffer), limit];
+    const params: unknown[] = [Buffer.from(buffer.buffer), limit, now];
 
     if (sessionKey) {
       sql += " AND c.session_key = ?";
@@ -2106,11 +2147,12 @@ export class SQLiteBackend implements StorageBackend {
   }
 
   async supersede(loserId: string, winnerId: string): Promise<ResolveResult> {
+    const now = Date.now();
     const updated = this.db
       .prepare(
-        "UPDATE captures SET trust_state = 'stale', superseded_by = ? WHERE id = ? AND deleted_at IS NULL AND trust_state != 'rejected'",
+        "UPDATE captures SET trust_state = 'stale', superseded_by = ?, valid_until = ? WHERE id = ? AND deleted_at IS NULL AND trust_state != 'rejected'",
       )
-      .run(winnerId, loserId).changes;
+      .run(winnerId, now, loserId).changes;
     if (updated > 0) {
       // Remove loser's vector so dead embeddings don't accumulate in captures_vec
       this.db.prepare("DELETE FROM captures_vec WHERE id = ?").run(loserId);
@@ -2753,11 +2795,13 @@ export class SQLiteBackend implements StorageBackend {
     if (entities.length === 0) return [];
     const normalized = entities.map((e) => e.toLowerCase());
     const placeholders = normalized.map(() => "?").join(",");
-    const params: unknown[] = [...normalized];
+    const now = Date.now();
+    const params: unknown[] = [...normalized, now];
     const conditions: string[] = [
       "c.deleted_at IS NULL",
       "c.trust_state != 'rejected'",
       "c.superseded_by IS NULL",
+      "(c.valid_until IS NULL OR c.valid_until > ?)",
     ];
     if (sessionKey) {
       conditions.push("c.session_key = ?");
@@ -2969,6 +3013,80 @@ export class SQLiteBackend implements StorageBackend {
       .all(captureId, sessionKey, now, now) as { other_id: string }[];
     for (const row of proximityRows) {
       linkStmt.run(captureId, row.other_id, "session-proximity", now);
+    }
+  }
+
+  /**
+   * v17: Causal link auto-extraction (MAGMA-inspired).
+   * Detects causal language in capture content and links to nearby captures
+   * in the same session that share tags or entities.
+   *
+   * Causal patterns: "caused by", "led to", "because of", "resulted in",
+   * "due to", "fixed by", "root cause", "triggered by".
+   *
+   * Direction: if capture A says "X caused Y" and capture B (nearby, same tags)
+   * contains "X", then A → B with link_type "cause-effect".
+   */
+  private extractCausalLinks(
+    captureId: string,
+    content: string,
+    tags: string[],
+    sessionKey: string,
+  ): void {
+    // Causal language patterns — if present, this capture describes a cause-effect relationship
+    const causalPatterns = [
+      /\bcaused\s+by\b/i,
+      /\bled\s+to\b/i,
+      /\bbecause\s+of\b/i,
+      /\bresulted\s+in\b/i,
+      /\bdue\s+to\b/i,
+      /\bfixed\s+by\b/i,
+      /\broot\s+cause\b/i,
+      /\btriggered\s+by\b/i,
+      /\bfix(?:ed|es)?\s+(?:this|that|the)\b/i,
+    ];
+    const hasCausalLanguage = causalPatterns.some((p) => p.test(content));
+
+    // Find nearby captures in the same session with shared tags (potential cause/effect)
+    if (tags.length === 0) return;
+    const now = Date.now();
+    const tagConditions = tags.map(() => "c.tags LIKE ?").join(" OR ");
+    const nearbyRows = this.db
+      .prepare(
+        `SELECT c.id as other_id, c.content as other_content, c.created_at
+         FROM captures c
+         WHERE c.id != ? AND c.session_key = ? AND c.deleted_at IS NULL
+           AND c.superseded_by IS NULL
+           AND ABS(c.created_at - ?) < 600000
+           AND (${tagConditions})
+         ORDER BY ABS(c.created_at - ?) ASC
+         LIMIT 5`,
+      )
+      .all(
+        captureId,
+        sessionKey,
+        now,
+        ...tags.map((t) => `%"${t}"%`),
+        now,
+      ) as { other_id: string; other_content: string; created_at: number }[];
+
+    // Create cause-effect links: the older capture is the cause, the newer is the effect.
+    // A link is created if EITHER the new capture OR the nearby capture has causal language.
+    const linkStmt = this.db.prepare(
+      `INSERT OR IGNORE INTO memory_links (from_id, to_id, link_type, auto, created_at)
+       VALUES (?, ?, 'cause-effect', 1, ?)`,
+    );
+    for (const row of nearbyRows) {
+      const nearbyHasCausal = causalPatterns.some((p) => p.test(row.other_content));
+      if (!hasCausalLanguage && !nearbyHasCausal) continue;
+
+      if (row.created_at < now) {
+        // nearby is older → nearby is the cause, this capture is the effect
+        linkStmt.run(row.other_id, captureId, now);
+      } else {
+        // this capture is older → this is the cause, nearby is the effect
+        linkStmt.run(captureId, row.other_id, now);
+      }
     }
   }
 
@@ -3212,6 +3330,9 @@ function rowToEntry(row: DbRow): CaptureEntry {
     trustState: (row.trust_state as TrustState) ?? "candidate",
     rejectionReason: row.rejection_reason ?? undefined,
     supersededBy: row.superseded_by ?? undefined,
+    validFrom: (row as { valid_from?: number }).valid_from ?? undefined,
+    validUntil: (row as { valid_until?: number }).valid_until ?? undefined,
+    sourceRef: (row as { source_ref?: string }).source_ref ?? undefined,
   };
 }
 

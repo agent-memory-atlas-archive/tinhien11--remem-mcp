@@ -8,6 +8,8 @@ import { dirname, join } from "node:path";
  *
  * For Devin CLI: adds hooks to ~/.config/devin/config.json under the "hooks" key.
  * For Claude Code: adds hooks to ~/.claude/settings.json under the "hooks" key.
+ * For ZCode: adds hooks to ~/.zcode/cli/config.json under "hooks.events", and sets
+ *   hooks.enabled = true (configuration-file hooks are disabled by default).
  *
  * Hooks installed:
  * - SessionStart: runs `remem-mcp hook-recall` → injects recent memory into agent context
@@ -331,6 +333,83 @@ timeout = 10
   return true;
 }
 
+/** Install hooks for ZCode.
+ *
+ * ZCode stores configuration-file hooks at ~/.zcode/cli/config.json under
+ * `hooks.events.<Event>` (note the extra nesting under "events"), and they are
+ * disabled by default — `hooks.enabled: true` must be set or nothing fires.
+ *
+ * ZCode supports exactly seven events: SessionStart, UserPromptSubmit,
+ * PreToolUse, PermissionRequest, PostToolUse, PostToolUseFailure, Stop.
+ * It has no PostCompaction/PostCompact and no SessionEnd, so the session-end
+ * capture is wired to Stop instead.
+ */
+function installZcodeHooks(): boolean {
+  const configPath = join(homedir(), ".zcode", "cli", "config.json");
+
+  // Install when ZCode has been run (~/.zcode exists). writeJsonConfig creates
+  // cli/config.json if the desktop app hasn't written it yet.
+  if (!existsSync(join(homedir(), ".zcode"))) {
+    return false;
+  }
+
+  const config = readJsonConfig(configPath);
+
+  // ZCode supports neither PostCompaction nor SessionEnd; route session-end
+  // capture to Stop instead. PreToolUse/UserPromptSubmit/PostToolUse map 1:1.
+  const { PostCompaction: _omit, SessionEnd: _omit2, ...baseConfig } = HOOKS_CONFIG;
+  const zcodeHooksConfig = {
+    ...baseConfig,
+    Stop: [
+      {
+        hooks: [
+          {
+            type: "command",
+            command: hookCommand("hook-stop"),
+            timeout: 10,
+          },
+        ],
+      },
+    ],
+  };
+
+  const updated = mergeZcodeHooks(config, zcodeHooksConfig);
+  writeJsonConfig(configPath, updated);
+  return true;
+}
+
+/** Merge hooks into a ZCode config object under hooks.events.
+ * Same merge semantics as mergeHooks (append, dedupe prior remem-mcp hooks),
+ * but writes into the nested `hooks.events` key and force-enables the runner. */
+function mergeZcodeHooks(
+  config: Record<string, unknown>,
+  hooks: Record<string, unknown>,
+): Record<string, unknown> {
+  const existing = (config.hooks as Record<string, unknown>) ?? {};
+  const existingEvents = (existing.events as Record<string, unknown>) ?? {};
+  const merged: Record<string, unknown> = { ...existingEvents };
+
+  for (const [event, newEntries] of Object.entries(hooks)) {
+    const existingEntries = (existingEvents[event] as unknown[]) ?? [];
+    // Filter out any previous remem-mcp hooks for this event (avoid duplicates on re-install)
+    const filtered = existingEntries.filter((entry) => {
+      const hooks = (entry as { hooks?: { command?: string }[] })?.hooks;
+      if (!hooks) return true;
+      return !hooks.some((h) => h?.command?.includes("remem-mcp"));
+    });
+    merged[event] = [...filtered, ...(newEntries as unknown[])];
+  }
+
+  return {
+    ...config,
+    hooks: {
+      ...existing,
+      enabled: true, // configuration-file hooks are disabled by default in ZCode
+      events: merged,
+    },
+  };
+}
+
 /** Install auto-capture hooks for supported agents. */
 export async function installHooks(): Promise<void> {
   // Clean up old hooks first (handles upgrades where hooks were removed)
@@ -340,11 +419,14 @@ export async function installHooks(): Promise<void> {
 
   if (installDevinHooks()) names.push("Devin CLI");
   if (installClaudeCodeHooks()) names.push("Claude Code");
+  if (installZcodeHooks()) names.push("ZCode");
   if (installCodexHooks()) names.push("Codex CLI");
 
   if (names.length === 0) {
     console.log("No supported agents found.");
-    console.log("Install Devin CLI, Claude Code, or Codex CLI first, then run this command again.");
+    console.log(
+      "Install ZCode, Devin CLI, Claude Code, or Codex CLI first, then run this command again.",
+    );
     return;
   }
 
@@ -415,6 +497,46 @@ export async function uninstallHooks(calledFromInstall = false): Promise<void> {
         delete config.hooks;
       }
       writeJsonConfig(claudePath, config);
+      removed++;
+    }
+  }
+
+  // Remove from ZCode (hooks nested under hooks.events)
+  const zcodePath = join(homedir(), ".zcode", "cli", "config.json");
+  if (existsSync(zcodePath)) {
+    const config = readJsonConfig(zcodePath);
+    const hooks = (config.hooks as Record<string, unknown>) ?? {};
+    const events = (hooks.events as Record<string, unknown[]>) ?? {};
+    let changed = false;
+
+    for (const ev of rememEvents) {
+      if (events[ev]) {
+        events[ev] = (events[ev] as { hooks?: { command?: string }[] }[]).filter((entry) => {
+          const entryHooks = entry?.hooks;
+          if (!entryHooks) return true;
+          return !entryHooks.some((h) => h?.command?.includes("remem-mcp"));
+        });
+        if (Array.isArray(events[ev]) && events[ev].length === 0) {
+          delete events[ev];
+        }
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      if (Object.keys(events).length === 0) {
+        delete hooks.events;
+        // events was the only payload; "enabled" alone runs nothing, so drop it.
+        delete hooks.enabled;
+      } else {
+        hooks.events = events;
+      }
+      if (Object.keys(hooks).length === 0) {
+        delete config.hooks;
+      } else {
+        config.hooks = hooks;
+      }
+      writeJsonConfig(zcodePath, config);
       removed++;
     }
   }

@@ -1,5 +1,5 @@
 -- Schema for remem-mcp
--- Version: 13
+-- Version: 17
 --
 -- This file runs on the first start. It creates all tables, triggers, and indexes.
 -- It uses CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS.
@@ -81,7 +81,13 @@ CREATE TABLE IF NOT EXISTS captures (
   salience          REAL NOT NULL DEFAULT 1.0,          -- decay score, updated by forget sweep
   -- v12: TTL for time-sensitive captures + feedback-derived salience floor
   expires_at        INTEGER,                            -- timestamp; forgetSweep hard-deletes past this
-  feedback_salience REAL NOT NULL DEFAULT 1.0           -- multiplier from feedback signals (0.1–2.0)
+  feedback_salience REAL NOT NULL DEFAULT 1.0,            -- multiplier from feedback signals (0.1–2.0)
+  -- v17: Temporal validity (SodaMem-inspired). valid_from = when the fact became true,
+  -- valid_until = when it stopped being true (set by supersede). NULL = still valid.
+  valid_from    INTEGER,                                  -- timestamp when the fact became true
+  valid_until   INTEGER,                                   -- timestamp when the fact stopped being true (set by supersede)
+  -- v17: Provenance tracking. Links a capture to its originating tool call or conversation turn.
+  source_ref    TEXT                                      -- provenance: e.g. "bash:git status", "tool:codegraph_search"
 );
 
 -- L0 messages: role-based conversation messages linked to a capture.

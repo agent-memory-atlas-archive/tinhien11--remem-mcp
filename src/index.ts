@@ -623,7 +623,7 @@ remem-mcp quick guide
 
     console.log("\n✓ Setup complete.\n");
     console.log("  Step 1  Restart your agent (quit and reopen)");
-    console.log("  Step 2  Ask: \"what do you remember?\"");
+    console.log('  Step 2  Ask: "what do you remember?"');
     console.log("  Step 3  If agent recalls past context = memory working\n");
     console.log("  In your agent, you can say:");
     console.log('    "index the code in src"         → CodeGraph indexes symbols');
@@ -1083,7 +1083,11 @@ remem-mcp quick guide
         teamId: row.team_id ?? "default",
         agentId: row.agent_id ?? "default",
       };
-      const ctx: PipelineContext = { storage, embedder: new LocalEmbedder(), sessionKey: "default" };
+      const ctx: PipelineContext = {
+        storage,
+        embedder: new LocalEmbedder(),
+        sessionKey: "default",
+      };
       const result = await pipeline.process(input, ctx);
       if (Object.keys(result).length > 0) extracted++;
     }
@@ -1367,6 +1371,7 @@ Daily use:
 `);
     if (!showAll) {
       console.log(`The server runs as a stdio process. Add it to your MCP client:
+  ZCode:       ~/.zcode/cli/config.json (mcp.servers)
   Claude Code: ~/.claude.json
   Cursor:      ~/.cursor/mcp.json
   Devin CLI:   devin mcp add remem-mcp -- npx -y remem-mcp
@@ -1382,7 +1387,7 @@ Setup & maintenance:
   remem-mcp                Start the MCP server (stdio)
   remem-mcp setup          Install MCP + hooks + skill (one command)
   remem-mcp init           Show how to activate memory in your agent session
-  remem-mcp install-skill  Install the agent skill for Devin CLI
+  remem-mcp install-skill  Install the agent skill (ZCode, Claude Code, Devin, Codex)
   remem-mcp install-hooks  Install lifecycle hooks (SessionStart, Stop, SessionEnd)
   remem-mcp uninstall-hooks  Remove lifecycle hooks
   remem-mcp hook-post-commit  Auto-index changed files (git post-commit hook)
@@ -1479,11 +1484,12 @@ Common flags for L1-L3 and knowledge/skills commands:
   --type <type>        Filter by type (for knowledge: wiki, code-graph)
 
 The server runs as a stdio process. Add it to your MCP client configuration:
+  ZCode:       ~/.zcode/cli/config.json (mcp.servers)
   Claude Code: ~/.claude.json
   Cursor:      ~/.cursor/mcp.json
   Devin CLI:   devin mcp add remem-mcp -- npx -y remem-mcp
 
-To install the skill (Devin CLI only):
+To install the skill:
   npx remem-mcp install-skill
 `);
     return;

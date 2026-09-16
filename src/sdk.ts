@@ -115,7 +115,7 @@ export class Memory {
     content: string,
     type: CaptureType,
     tags: string[] = [],
-    opts?: { sessionKey?: string; autoGlobal?: boolean },
+    opts?: { sessionKey?: string; autoGlobal?: boolean; metadata?: Record<string, unknown> },
   ): Promise<string | null> {
     const { text: redactedContent } = this.redactSecrets ? redact(content) : { text: content };
     let sessionKey = opts?.sessionKey ?? this.sessionKey;
@@ -141,6 +141,7 @@ export class Memory {
       content: redactedContent,
       tags,
       createdAt: Date.now(),
+      metadata: opts?.metadata,
     };
 
     await this.storage.put(entry);

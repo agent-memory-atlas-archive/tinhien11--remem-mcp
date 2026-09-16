@@ -19,7 +19,7 @@ Local-first memory that survives context compaction. Learns from every error, in
 npx remem-mcp setup
 ```
 
-Auto-detects Claude Code, Cursor, Devin, Codex. Registers MCP server + hooks.
+Auto-detects ZCode, Claude Code, Cursor, Devin, Codex. Registers MCP server + hooks.
 
 ---
 
@@ -53,7 +53,7 @@ You don't run any commands. The agent calls `recall()` before answering and `cap
 ## How it works
 
 ```
-AI Agent (Claude Code / Devin / Cursor / Codex)
+AI Agent (ZCode / Claude Code / Devin / Cursor / Codex)
     │
     ├── MCP tools ──▶ recall, capture, codegraph_*, wiki_*, feedback
     │

@@ -1212,3 +1212,136 @@ export function listSymbols(
     contentHash: r.content_hash,
   }));
 }
+
+/** v17: Entry point patterns for each language. */
+const ENTRY_POINT_PATTERNS: Record<string, RegExp[]> = {
+  typescript: [
+    /^(main|run|start|bootstrap|init)$/,
+    /^(handle|get|post|put|delete|patch)([A-Z].*)?$/,
+    /^(on)([A-Z].*)?$/,
+    /Handler$/,
+    /Controller$/,
+    /Command$/,
+    /Route$/,
+    /Middleware$/,
+  ],
+  javascript: [
+    /^(main|run|start|bootstrap|init)$/,
+    /^(handle|get|post|put|delete|patch)([A-Z].*)?$/,
+    /^(on)([A-Z].*)?$/,
+    /Handler$/,
+    /Controller$/,
+    /Command$/,
+    /Route$/,
+    /Middleware$/,
+  ],
+  python: [
+    /^(main|run|start|setup)$/,
+    /^(handle|get|post|put|delete|patch)_/,
+    /^on_/,
+    /_handler$/,
+    /_view$/,
+    /_command$/,
+    /_route$/,
+  ],
+  go: [
+    /^(main|run|serve|start)$/,
+    /^(handle|get|post|put|delete)([A-Z].*)?$/,
+    /^on([A-Z].*)?$/,
+    /Handler$/,
+    /HandlerFunc$/,
+  ],
+  rust: [
+    /^(main|run|start)$/,
+    /^(handle|get|post|put|delete)_/,
+    /_handler$/,
+  ],
+  java: [
+    /^(main|run|start)$/,
+    /^(handle|get|post|put|delete)/,
+    /Handler$/,
+    /Controller$/,
+    /Service$/,
+    /Servlet$/,
+  ],
+  csharp: [
+    /^(Main|Run|Start)$/,
+    /^(Handle|Get|Post|Put|Delete)/,
+    /Handler$/,
+    /Controller$/,
+  ],
+  c: [
+    /^(main|run|start)$/,
+    /^(handle|get|post|put|delete)_/,
+  ],
+  cpp: [
+    /^(main|run|start)$/,
+    /^(handle|get|post|put|delete)/,
+    /Handler$/,
+  ],
+};
+
+/**
+ * v17: Find entry points in the codebase — main functions, HTTP handlers,
+ * CLI commands, event handlers. Inspired by codegraph-ai's find_entry_points.
+ *
+ * An entry point is a function/method that is called by external infrastructure
+ * (HTTP server, CLI framework, event loop) rather than by other code.
+ */
+export function findEntryPoints(
+  db: Database,
+  opts: { teamId?: string; repoPath?: string; limit?: number } = {},
+): SymbolInfo[] {
+  const limit = opts.limit ?? 100;
+
+  let sql = `SELECT * FROM symbols WHERE kind IN ('function', 'method', 'Function', 'Method', 'function_declaration', 'method_definition')`;
+  const params: unknown[] = [];
+
+  if (opts.teamId !== undefined) {
+    sql += " AND team_id IS ?";
+    params.push(opts.teamId);
+  }
+  if (opts.repoPath !== undefined) {
+    sql += " AND (repo_path = ? OR repo_path LIKE ?)";
+    params.push(opts.repoPath, `${opts.repoPath}%`);
+  }
+
+  sql += " LIMIT 10000";
+
+  const rows = db.prepare(sql).all(...params) as Array<{
+    id: string;
+    name: string;
+    kind: string;
+    file_path: string;
+    line_start: number;
+    line_end: number;
+    language: string;
+    signature: string | null;
+    docstring: string | null;
+    parent_id: string | null;
+    content_hash: string;
+  }>;
+
+  const entryPoints: SymbolInfo[] = [];
+  for (const row of rows) {
+    const patterns = ENTRY_POINT_PATTERNS[row.language] ?? ENTRY_POINT_PATTERNS["typescript"];
+    const isEntryPoint = patterns.some((p) => p.test(row.name));
+    if (isEntryPoint) {
+      entryPoints.push({
+        id: row.id,
+        name: row.name,
+        kind: row.kind,
+        filePath: row.file_path,
+        lineStart: row.line_start,
+        lineEnd: row.line_end,
+        language: row.language,
+        signature: row.signature,
+        docstring: row.docstring,
+        parentId: row.parent_id,
+        contentHash: row.content_hash,
+      });
+    }
+  }
+
+  return entryPoints.slice(0, limit);
+}

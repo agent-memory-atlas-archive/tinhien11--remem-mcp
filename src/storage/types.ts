@@ -50,6 +50,12 @@ export interface CaptureEntry {
   rejectionReason?: string;
   /** ID of the capture that supersedes this one, if trust_state is 'stale'. */
   supersededBy?: string;
+  /** v17: When the fact became true (SodaMem-inspired). Defaults to createdAt. */
+  validFrom?: number;
+  /** v17: When the fact stopped being true (set by supersede). NULL = still valid. */
+  validUntil?: number;
+  /** v17: Provenance — originating tool call or conversation turn. */
+  sourceRef?: string;
 }
 
 export interface MessageRow {
